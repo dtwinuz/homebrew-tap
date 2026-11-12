@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1" # har dushanba: havola va SHA-256 hali to'g'rimi
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  cask:
+    runs-on: macos-15
+    env:
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Tap from this checkout
+        run: |
+          taps="$(brew --repository)/Library/Taps/dtwinuz"
+          mkdir -p "$taps"
+          ln -sfn "$GITHUB_WORKSPACE" "$taps/homebrew-tap"
+      - run: brew style dtwinuz/tap
+      - run: brew audit --cask --strict --online dtwinuz/tap/bitg
+      - run: brew livecheck --cask dtwinuz/tap/bitg
+      - name: Install
+        run: |
+          brew install --cask dtwinuz/tap/bitg
+          test -d "/Library/Input Methods/bitg.app"
+          pkgutil --pkg-info uz.bitg.inputmethod.pkg
+          plutil -extract CFBundleShortVersionString raw "/Library/Input Methods/bitg.app/Contents/Info.plist"
+      - name: Uninstall
+        run: |
+          brew uninstall --cask --zap dtwinuz/tap/bitg
+          test ! -e "/Library/Input Methods/bitg.app"
+          ! pkgutil --pkg-info uz.bitg.inputmethod.pkg
