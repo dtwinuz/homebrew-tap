@@ -29,6 +29,7 @@ jobs:
           taps="$(brew --repository)/Library/Taps/dtwinuz"
           mkdir -p "$taps"
           ln -sfn "$GITHUB_WORKSPACE" "$taps/homebrew-tap"
+          brew trust dtwinuz/tap
       - run: brew style dtwinuz/tap
       - run: brew audit --cask --strict --online dtwinuz/tap/bitg
       - run: brew livecheck --cask dtwinuz/tap/bitg
