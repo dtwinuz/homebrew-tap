@@ -26,5 +26,6 @@ alphabet as you type. Install with `brew install --cask dtwinuz/tap/bitg`, log o
 System Settings → Keyboard → Input Sources. macOS 11+, Apple silicon and Intel (one universal package). Beta, not
 notarized yet.
 
-Cask'ni [`dtwinuz/bitg`](https://github.com/dtwinuz/bitg) dagi `tools/release/packaging.py` yaratadi; CI har o'zgarishda
-va har dushanba uni haqiqiy macOS'da o'rnatib, o'chirib tekshiradi.
+Cask o'zi yangilanadi (`autobump` workflow, har 3 soatda): bitg'ning yangi relizi chiqsa, `.pkg` SHA-256 va SLSA
+attestation (dtwinuz/bitg `build.yml`, shu teg) bilan tekshiriladi, cask haqiqiy macOS'da o'rnatib-o'chirib sinaladi va
+faqat shundan keyin main'ga yoziladi. `ci` har o'zgarishda va har dushanba o'sha sinovni qaytaradi.
