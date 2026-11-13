@@ -1,0 +1,103 @@
+name: autobump
+
+# bitg'ning yangi relizi chiqqanda cask'ni o'zi yangilaydi (Homebrew'ning autobump boti kabi), repolararo token yo'q:
+#   1. check (ubuntu): dtwinuz/bitg so'nggi relizi cask'dagidan yangiroqmi (pre-release hisobga olinmaydi).
+#   2. bump (macOS): .pkg relizdan olinadi, SHA-256 reliz yonidagi .sha256 bilan va SLSA attestation'i (dtwinuz/bitg
+#      build.yml, shu teg, GitHub runner) bilan tekshiriladi; cask yangilanadi; brew style + audit --strict --online +
+#      o'rnatish + versiya + o'chirish o'tsagina main'ga commit qilinadi.
+# Qo'lda: Actions -> autobump -> Run workflow.
+on:
+  schedule:
+    - cron: "23 */3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: autobump
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cur=$(sed -n 's/^  version "\(.*\)"$/\1/p' Casks/bitg.rb)
+          tag=$(gh api repos/dtwinuz/bitg/releases/latest -q .tag_name)
+          new=${tag#v}
+          echo "$new" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "teg kutilmagan: $tag"; exit 1; }
+          # faqat oldinga: so'nggi reliz cask'dagidan katta bo'lsagina
+          if [ "$new" = "$cur" ] || [ "$(printf '%s\n%s\n' "$cur" "$new" | sort -V | tail -1)" != "$new" ]; then
+            echo "cask $cur, so'nggi reliz $new: yangilash kerak emas"
+          else
+            echo "cask $cur -> $new"
+            echo "version=$new" >> "$GITHUB_OUTPUT"
+          fi
+
+  bump:
+    needs: check
+    if: needs.check.outputs.version != ''
+    runs-on: macos-15
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      HOMEBREW_GITHUB_API_TOKEN: ${{ github.token }}
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      HOMEBREW_NO_ENV_HINTS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reliz fayli, SHA-256 va attestation
+        id: pkg
+        run: |
+          d="$RUNNER_TEMP/rel"
+          gh release download "v$VERSION" -R dtwinuz/bitg -D "$d" -p "bitg-$VERSION-macos.pkg" -p "bitg-$VERSION-macos.pkg.sha256"
+          f="$d/bitg-$VERSION-macos.pkg"
+          sum=$(shasum -a 256 "$f" | cut -d' ' -f1)
+          [ "$sum" = "$(cut -d' ' -f1 < "$f.sha256" | tr -d '\r')" ] || { echo ".sha256 mos emas"; exit 1; }
+          gh attestation verify "$f" -R dtwinuz/bitg \
+            --signer-workflow dtwinuz/bitg/.github/workflows/build.yml \
+            --source-ref "refs/tags/v$VERSION" --deny-self-hosted-runners
+          echo "sha256=$sum" >> "$GITHUB_OUTPUT"
+      - name: Cask
+        env:
+          SHA: ${{ steps.pkg.outputs.sha256 }}
+        run: |
+          sed -i '' -e "s/^  version \".*\"$/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"$/  sha256 \"$SHA\"/" Casks/bitg.rb
+          git diff --stat
+          grep -q "^  version \"$VERSION\"$" Casks/bitg.rb && grep -q "^  sha256 \"$SHA\"$" Casks/bitg.rb
+      - name: Tap from this checkout
+        run: |
+          taps="$(brew --repository)/Library/Taps/dtwinuz"
+          mkdir -p "$taps"
+          ln -sfn "$GITHUB_WORKSPACE" "$taps/homebrew-tap"
+          brew trust dtwinuz/tap
+      - run: brew style dtwinuz/tap
+      - run: brew audit --cask --strict --online dtwinuz/tap/bitg
+      - name: Install, version, uninstall
+        run: |
+          brew install --cask dtwinuz/tap/bitg
+          got=$(plutil -extract CFBundleShortVersionString raw "/Library/Input Methods/bitg.app/Contents/Info.plist")
+          [ "$got" = "$VERSION" ] || { echo "o'rnatilgan versiya $got, kutilgan $VERSION"; exit 1; }
+          pkgutil --pkg-info uz.bitg.inputmethod.pkg
+          brew uninstall --cask --zap dtwinuz/tap/bitg
+          test ! -e "/Library/Input Methods/bitg.app"
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q -s -am "bitg $VERSION" -m "Release: https://github.com/dtwinuz/bitg/releases/tag/v$VERSION"
+          git push origin HEAD:main
+          echo "### bitg $VERSION cask'ga yozildi" >> "$GITHUB_STEP_SUMMARY"
